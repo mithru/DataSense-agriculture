@@ -18,15 +18,19 @@
  ****************************************************/
 
 /*
-THIS CODE IS STILL IN PROGRESS!
+  THIS CODE IS STILL IN PROGRESS!
 
-Open up the serial console on the Arduino at 115200 baud to interact with FONA
+  Open up the serial console on the Arduino at 115200 baud to interact with FONA
 
 
-This code will receive an SMS, identify the sender's phone number, and automatically send a response
+  This code will receive an SMS, identify the sender's phone number, and automatically send a response
 
-For use with FONA 800 & 808, not 3G
+  For use with FONA 800 & 808, not 3G
 */
+
+boolean useSerial = false;
+int sensorPin = A0;    // select the input pin for the potentiometer
+int sensorValue = 0;  // variable to store the value coming from the sensor
 
 #include "Adafruit_FONA.h"
 
@@ -47,60 +51,119 @@ SoftwareSerial *fonaSerial = &fonaSS;
 // Hardware serial is also possible!
 //  HardwareSerial *fonaSerial = &Serial1;
 
+int ledPin = 13;
+
 Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 
 uint8_t readline(char *buff, uint8_t maxbuff, uint16_t timeout = 0);
 
 void setup() {
-  while (!Serial);
+  pinMode(ledPin, OUTPUT);
+  if (useSerial) {
+    while (!Serial);
 
-  Serial.begin(115200);
-  Serial.println(F("FONA SMS caller ID test"));
-  Serial.println(F("Initializing....(May take 3 seconds)"));
-
+    Serial.begin(115200);
+    Serial.println(F("FONA SMS caller ID test"));
+    Serial.println(F("Initializing....(May take 3 seconds)"));
+  }
   // make it slow so its easy to read!
   fonaSerial->begin(4800);
   if (! fona.begin(*fonaSerial)) {
-    Serial.println(F("Couldn't find FONA"));
+    if (useSerial) {
+      Serial.println(F("Couldn't find FONA"));
+    }
     while (1);
   }
-  Serial.println(F("FONA is OK"));
 
-  // Print SIM card IMEI number.
-  char imei[16] = {0}; // MUST use a 16 character buffer for IMEI!
-  uint8_t imeiLen = fona.getIMEI(imei);
-  if (imeiLen > 0) {
-    Serial.print("SIM card IMEI: "); Serial.println(imei);
-  }
-
-  Serial.println("FONA Ready");
-
-}
-
-void sendMsg() {
   uint16_t vbat;
-  if (! fona.getBattPercent(&vbat)) {
-    Serial.println(F("Failed to read Batt"));
-  } else {
-    Serial.print(F("VPct = "));
-    Serial.print(vbat);
-    Serial.println(F("%"));
+
+  if (useSerial) {
+    Serial.println(F("FONA is OK"));
+
+    // Print SIM card IMEI number.
+    char imei[16] = {0}; // MUST use a 16 character buffer for IMEI!
+    uint8_t imeiLen = fona.getIMEI(imei);
+    if (imeiLen > 0) {
+      Serial.print("SIM card IMEI: "); Serial.println(imei);
+    }
+
+    Serial.println("FONA Ready");
+
+    if (! fona.getBattPercent(&vbat)) {
+      Serial.println(F("Failed to read Batt"));
+    } else {
+      Serial.print(F("VPct = "));
+      Serial.print(vbat);
+      Serial.println(F("%"));
+    }
   }
 
   char msg[32];
-  String theMsg = "## Sensor=";
-  theMsg += String(int(random(100)));
+  String theMsg = "#Started#  ";
+  theMsg += "Batt: ";
+  theMsg += String(vbat);
+  theMsg += "%";
+
+  theMsg.toCharArray(msg, 32);
+  if (useSerial) {
+    Serial.println(msg);
+  }
+  if (!fona.sendSMS("+19292673123", msg)) {
+    if (useSerial)
+      Serial.println(F("Failed"));
+  } else {
+    if (useSerial)
+      Serial.println(F("Sent!"));
+  }
+  LEDNotification();
+
+}
+
+void LEDNotification() {
+
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(ledPin, HIGH);
+    delay(100);
+    digitalWrite(ledPin, LOW);
+    delay(100);
+  }
+}
+
+void sendMsg() {
+
+  digitalWrite(ledPin, HIGH);
+  uint16_t vbat;
+  if (! fona.getBattPercent(&vbat)) {
+    if (useSerial)
+      Serial.println(F("Failed to read Batt"));
+  } else {
+    if (useSerial) {
+      Serial.print(F("VPct = "));
+      Serial.print(vbat);
+      Serial.println(F("%"));
+    }
+  }
+
+  char msg[32];
+  String theMsg = "##Sensor: ";
+  theMsg += String(int(sensorValue));
   theMsg += " . Battery: ";
   theMsg += String(vbat);
   theMsg += "%";
 
   theMsg.toCharArray(msg, 32);
-  Serial.println(msg);
+  if (useSerial)
+    Serial.println(msg);
   if (!fona.sendSMS("+19292673123", msg)) {
-    Serial.println(F("Failed"));
+    if (useSerial)
+      Serial.println(F("Failed"));
   } else {
-    Serial.println(F("Sent!"));
+    if (useSerial)
+      Serial.println(F("Sent!"));
   }
+  delay(30);
+
+  digitalWrite(ledPin, LOW);
 }
 
 
@@ -111,9 +174,17 @@ int secondsCount = 0;
 void loop() {
 
   delay(1000);
+  sensorValue = map(analogRead(sensorPin), 0, 1023, 0, 100);
+
   secondsCount += 1;
-  if (secondsCount > 300) {
-    Serial.println("###############################");
+
+  if (sensorValue > 50) {
+    sendMsg();
+    delay(10000);
+  }
+  if (secondsCount > 60) {
+    if (useSerial)
+      Serial.println("###############################");
     sendMsg();
     secondsCount = 0;
   }
@@ -126,7 +197,8 @@ void loop() {
     //Read the notification into fonaInBuffer
     do  {
       *bufPtr = fona.read();
-      Serial.write(*bufPtr);
+      if (useSerial)
+        Serial.write(*bufPtr);
       delay(1);
     } while ((*bufPtr++ != '\n') && (fona.available()) && (++charCount < (sizeof(fonaInBuffer) - 1)));
 
@@ -136,51 +208,64 @@ void loop() {
     //Scan the notification string for an SMS received notification.
     //  If it's an SMS message, we'll get the slot number in 'slot'
     if (1 == sscanf(fonaInBuffer, "+CMTI: \"SM\",%d", &slot)) {
-      Serial.print("slot: "); Serial.println(slot);
-
+      if (useSerial) {
+        Serial.print("slot: "); Serial.println(slot);
+      }
+      LEDNotification();
       char callerIDbuffer[32];  //we'll store the SMS sender number in here
 
       // Retrieve SMS sender address/phone number.
       if (! fona.getSMSSender(slot, callerIDbuffer, 31)) {
-        Serial.println("Didn't find SMS message in slot!");
+        if (useSerial)
+          Serial.println("Didn't find SMS message in slot!");
       }
-      Serial.print(F("FROM: ")); Serial.println(callerIDbuffer);
-
-      //Send back an automatic response
-      Serial.println("Sending reponse...");
-
       uint16_t vbat;
+
+      if (useSerial) {
+        Serial.print(F("FROM: ")); Serial.println(callerIDbuffer);
+
+        //Send back an automatic response
+        Serial.println("Sending reponse...");
+      }
       if (! fona.getBattPercent(&vbat)) {
-        Serial.println(F("Failed to read Batt"));
+        if (useSerial)
+          Serial.println(F("Failed to read Batt"));
       } else {
-        Serial.print(F("VPct = "));
-        Serial.print(vbat);
-        Serial.println(F("%"));
+        if (useSerial) {
+          Serial.print(F("VPct = "));
+          Serial.print(vbat);
+          Serial.println(F("%"));
+        }
       }
 
       char msg[32];
       String theMsg = "Sensor=";
-      theMsg += String(int(random(100)));
+      theMsg += String(int(sensorValue));
       theMsg += " . Battery: ";
       theMsg += String(vbat);
       theMsg += "%";
 
       theMsg.toCharArray(msg, 32);
-      Serial.println(msg);
+      if (useSerial)
+        Serial.println(msg);
 
       if (!fona.sendSMS(callerIDbuffer, msg)) {
-        Serial.println(F("Failed"));
+        if (useSerial)
+          Serial.println(F("Failed"));
       } else {
-        Serial.println(F("Sent!"));
+        if (useSerial)
+          Serial.println(F("Sent!"));
       }
 
       // delete the original msg after it is processed
       //   otherwise, we will fill up all the slots
       //   and then we won't be able to receive SMS anymore
       if (fona.deleteSMS(slot)) {
-        Serial.println(F("OK!"));
+        if (useSerial)
+          Serial.println(F("OK!"));
       } else {
-        Serial.println(F("Couldn't delete"));
+        if (useSerial)
+          Serial.println(F("Couldn't delete"));
       }
     }
   }
